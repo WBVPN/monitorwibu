@@ -1,0 +1,8 @@
+[Unit]
+Description=WIBU MONITOR v2 - susun & perbarui pesan dashboard Telegram
+After=network-online.target wibu-monitor-api.service
+
+[Service]
+Type=oneshot
+ExecStart=__BIN__/wibu-monitor render
+TimeoutStartSec=45

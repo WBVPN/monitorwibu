@@ -1,0 +1,9 @@
+[Unit]
+Description=WIBU MONITOR v2 - kirim metrik node ke master
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__BIN__/wibu-monitor-node
+TimeoutStartSec=45

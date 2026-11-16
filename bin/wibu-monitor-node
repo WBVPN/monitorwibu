@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""WIBU MONITOR v2 — agen node: kumpulkan metrik lalu kirim bertanda tangan.
+
+Konfigurasi /etc/wibu-monitor/node.conf (mode 600):
+    MASTER=http://1.2.3.4:5000
+    NAME=SG-1
+    KEY=<64 hex dari master>
+    SERVICES=xray,haproxy,dropbear,ws-stunnel      (opsional)
+    DOMAIN=                                        (opsional; kalau kosong dibaca /etc/xray/domain)
+    INSECURE=0                                     (1 = terima sertifikat TLS self-signed)
+    SPEEDTEST=0                                    (1 = ikut vnstat -tr 1, agak berat)
+
+Jalankan tiap menit (systemd timer: wibu-monitor-node.timer).
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import socket
+import ssl
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+CONF_PATH = os.environ.get("WIBU_NODE_CONF", "/etc/wibu-monitor/node.conf")
+CACHE_DIR = "/var/lib/wibu-monitor-node"
+
+
+def load_conf(path: str) -> dict:
+    conf: dict[str, str] = {}
+    if os.path.exists(path):
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    conf[k.strip()] = v.strip().strip('"')
+    return conf
+
+
+CONF = load_conf(CONF_PATH)
+NAME = CONF.get("NAME", socket.gethostname())
+MASTER = CONF.get("MASTER", "").rstrip("/")
+KEY = CONF.get("KEY", "")
+SERVICES = [s for s in CONF.get("SERVICES", "xray,haproxy,dropbear,ws-stunnel").split(",") if s]
+INSECURE = CONF.get("INSECURE", "0") == "1"      # terima sertifikat TLS self-signed
+SPEEDTEST = CONF.get("SPEEDTEST", "0") == "1"    # ikut uji kecepatan vnstat (agak berat)
+
+
+# --------------------------------------------------------------------- bantuan
+def run(cmd: list[str], timeout: int = 8) -> str:
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+
+def cache_get(key: str, ttl: int) -> str | None:
+    path = os.path.join(CACHE_DIR, key)
+    try:
+        if time.time() - os.path.getmtime(path) < ttl:
+            return open(path).read().strip()
+    except OSError:
+        pass
+    return None
+
+
+def cache_put(key: str, value: str) -> None:
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(os.path.join(CACHE_DIR, key), "w") as f:
+        f.write(value)
+
+
+def mask_ip(ip: str) -> str:
+    p = ip.split(".")
+    return f"{p[0]}.{p[1][:2]}*.***.**" if len(p) == 4 else ip
+
+
+def mask_domain(domain: str) -> str:
+    p = domain.split(".")
+    return f"{p[0]}.{p[1][:6]}**.***.**" if len(p) >= 2 else domain
+
+
+def human_gb(nbytes: float) -> str:
+    return f"{nbytes / 1024 ** 3:.1f} GB"
+
+
+def uptime_text() -> str:
+    secs = float(open("/proc/uptime").read().split()[0])
+    d, rem = divmod(int(secs), 86400)
+    h, rem = divmod(rem, 3600)
+    m = rem // 60
+    return f"{d} Hari, {h:02d}:{m:02d}" if d else f"{h} Jam, {m} Menit"
+
+
+def ram_info() -> tuple[str, float]:
+    vals = {}
+    for line in open("/proc/meminfo"):
+        k, _, v = line.partition(":")
+        vals[k] = float(v.split()[0]) * 1024
+    total = vals.get("MemTotal", 0)
+    used = total - vals.get("MemAvailable", 0)
+    pct = (used / total * 100) if total else 0
+    return f"{human_gb(used)} / {human_gb(total)} ({pct:.0f}%)", round(pct, 1)
+
+
+def disk_info() -> tuple[str, float]:
+    u = shutil.disk_usage("/")
+    pct = u.used / u.total * 100
+    return f"{human_gb(u.used)} / {human_gb(u.total)} ({pct:.0f}%)", round(pct, 1)
+
+
+def iface() -> str:
+    out = run(["sh", "-c", "ip route | awk '/default/ {print $5; exit}'"])
+    if out:
+        return out
+    return (run(["sh", "-c", "ip link | awk -F: '$0 !~ \"lo|vir|wl|^[^0-9]\" {print $2; exit}'"]).strip()
+            or "eth0")
+
+
+def traffic() -> tuple[str, str]:
+    """Prioritas vnstat; kalau tidak ada, hitung selisih /proc/net/dev antar pemanggilan."""
+    if shutil.which("vnstat"):
+        out = run(["vnstat", "-i", iface(), "--oneline"], timeout=10)
+        if out:
+            parts = out.split(";")
+            today = parts[6].strip() if len(parts) > 6 else ""
+            month = parts[11].strip() if len(parts) > 11 else ""
+            if today and month:
+                return today, month
+    try:
+        row = [l for l in open("/proc/net/dev") if l.strip().startswith(iface())][0]
+        rx, tx = (int(x) for x in row.split(":")[1].split()[:2])
+    except (IndexError, ValueError):
+        return "-", "-"
+    prev = cache_get("netdev", 10 ** 9)
+    cache_put("netdev", f"{rx} {tx}")
+    if prev:
+        prx, ptx = (int(x) for x in prev.split())
+        if rx >= prx and tx >= ptx:
+            return f"{human_gb(rx - prx)} (delta)", f"{human_gb(tx - ptx)} (delta)"
+    return "(mulai ukur)", "(mulai ukur)"
+
+
+def speed_test() -> tuple[str, str]:
+    if not SPEEDTEST or not shutil.which("vnstat"):
+        return "", ""
+    out = run(["vnstat", "-tr", "1", "-i", iface()], timeout=12)
+    rx = tx = ""
+    for line in out.splitlines():
+        if "rx" in line:
+            rx = line.split()[1]
+        if "tx" in line:
+            tx = line.split()[1]
+    return rx, tx
+
+
+def city_of(ip: str) -> str:
+    cached = cache_get("city", 86400)
+    if cached:
+        return cached
+    try:
+        req = urllib.request.Request(f"http://ip-api.com/json/{ip}",
+                                     headers={"User-Agent": "wibu-monitor/2.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            city = json.loads(r.read().decode()).get("city") or "Unknown"
+    except Exception:
+        city = "Unknown"
+    cache_put("city", city)
+    return city
+
+
+def public_ip() -> str:
+    cached = cache_get("ip", 600)
+    if cached:
+        return cached
+    for url in ("https://ifconfig.me/ip", "https://icanhazip.com"):
+        try:
+            with urllib.request.urlopen(url, timeout=8) as r:
+                ip = r.read().decode().strip()
+            if ip:
+                cache_put("ip", ip)
+                return ip
+        except Exception:
+            continue
+    return ""
+
+
+def services_state() -> list[str]:
+    out = []
+    for svc in SERVICES:
+        state = run(["systemctl", "is-active", svc]).strip()
+        out.append(f"{svc}:{'up' if state == 'active' else 'down'}")
+    return out
+
+
+def domain_of(ip: str) -> str:
+    for path in ("/etc/xray/domain", "/root/domain"):
+        try:
+            val = open(path).read().strip().splitlines()[0]
+            if val:
+                return val
+        except (OSError, IndexError):
+            continue
+    return CONF.get("DOMAIN") or run(["hostname", "-f"]) or ip
+
+
+# ---------------------------------------------------------------------- kirim
+def collect() -> dict:
+    ip = public_ip()
+    domain = domain_of(ip)
+    ram, ram_pct = ram_info()
+    disk, disk_pct = disk_info()
+    bw_today, bw_month = traffic()
+    rx, tx = speed_test()
+    load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0
+    cores = os.cpu_count() or 1
+    data = {
+        "ip": mask_ip(ip) if ip else "-",
+        "domain": mask_domain(domain) if domain else "-",
+        "city": city_of(ip) if ip else "Unknown",
+        "uptime": uptime_text(),
+        "load": f"{load:.2f} / {cores} core",
+        "ram": ram,
+        "ram_pct": ram_pct,
+        "disk": disk,
+        "disk_pct": disk_pct,
+        "bw_today": bw_today,
+        "bw_month": bw_month,
+        "services": services_state(),
+        "panel_active": "xray:up" in services_state(),
+        "ts_local": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    if rx or tx:
+        data["speed_rx"], data["speed_tx"] = rx or "-", tx or "-"
+    return data
+
+
+def send(data: dict) -> int:
+    sys.path.insert(0, "/usr/local/lib/wibu-monitor")
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
+    try:
+        import whmon  # noqa: PLC0415
+    except ImportError:
+        print("  [!] modul whmon tidak ada di /usr/local/lib/wibu-monitor", file=sys.stderr)
+        return 1
+    body = json.dumps({"data": data}).encode()
+    ts = int(time.time())
+    req = urllib.request.Request(
+        f"{MASTER}/api/report", data=body, method="POST",
+        headers={"Content-Type": "application/json", "X-Wibu-Node": NAME,
+                 "X-Wibu-Ts": str(ts), "X-Wibu-Sig": whmon.sign(KEY, body)})
+    ctx = None
+    if INSECURE and MASTER.startswith("https"):
+        ctx = ssl._create_unverified_context()  # noqa: SLF001
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+            print(f"  ✅ terkirim: HTTP {r.status}")
+            return 0
+    except urllib.error.HTTPError as exc:
+        print(f"  ✗ ditolak master: HTTP {exc.code} {exc.read().decode(errors='replace')}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"  ✗ gagal kirim: {exc}", file=sys.stderr)
+        return 1
+
+
+def main() -> int:
+    if not (MASTER and NAME and KEY):
+        print("  [!] node.conf belum lengkap (MASTER/NAME/KEY)", file=sys.stderr)
+        return 1
+    return send(collect())
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

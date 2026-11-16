@@ -1,0 +1,22 @@
+[Unit]
+Description=WIBU MONITOR v2 - penerima laporan node (HMAC per node)
+Documentation=https://github.com/WBVPN/Wibu-Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 __LIBDIR__/api_server.py
+Restart=always
+RestartSec=3
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/wibu-monitor /etc/wibu-monitor
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
