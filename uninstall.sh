@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==========================================================
-# WIBU MONITOR v2 — penghapusan
+# MONITOR WIBU v2 — penghapusan
 #   bash uninstall.sh --master         hapus sisi master (layanan, timer, konfig, data)
 #   bash uninstall.sh --node           hapus sisi node
 #   bash uninstall.sh --master --node  hapus keduanya
@@ -8,8 +8,8 @@
 # ==========================================================
 set -uo pipefail
 
-ETC=/etc/wibu-monitor
-LIBDIR=/usr/local/lib/wibu-monitor
+ETC=/etc/monitorwibu
+LIBDIR=/usr/local/lib/monitorwibu
 BIN=/usr/local/bin
 UNIT=/etc/systemd/system
 MASTER=0; NODE=0; PURGE=0
@@ -40,22 +40,22 @@ stop_unit() {
 
 if [[ $MASTER -eq 1 ]]; then
     say "── sisi master ──"
-    stop_unit wibu-monitor-api.service wibu-monitor-render.timer wibu-monitor-render.service
-    rm -f "$BIN/wibu-monitor"
+    stop_unit monitorwibu-api.service monitorwibu-render.timer monitorwibu-render.service
+    rm -f "$BIN/monitorwibu"
     if [[ $PURGE -eq 1 ]]; then
-        rm -rf "$ETC" "$LIBDIR" /var/lib/wibu-monitor
+        rm -rf "$ETC" "$LIBDIR" /var/lib/monitorwibu
         say "purge: konfigurasi, kunci, dan data dashboard dibuang"
     else
-        rm -rf /var/lib/wibu-monitor
+        rm -rf /var/lib/monitorwibu
         say "catatan: $ETC (berisi token & kunci node) DIBIARKAN — pakai --purge untuk membuang"
     fi
 fi
 
 if [[ $NODE -eq 1 ]]; then
     say "── sisi node ──"
-    stop_unit wibu-monitor-node.timer wibu-monitor-node.service
-    rm -f "$BIN/wibu-monitor-node"
-    rm -rf /var/lib/wibu-monitor-node
+    stop_unit monitorwibu-node.timer monitorwibu-node.service
+    rm -f "$BIN/monitorwibu-node"
+    rm -rf /var/lib/monitorwibu-node
     [[ $PURGE -eq 1 ]] && rm -f "$ETC/node.conf" && say "purge: node.conf (berisi kunci) dibuang"
 fi
 
@@ -74,8 +74,8 @@ if [[ $PURGE -eq 1 ]]; then
         crontab -l 2>/dev/null | grep -vE 'wibu_(master|node)\.sh' | crontab -
         say "entri cron v1 dibuang"
     fi
-    if systemctl list-units --all 2>/dev/null | grep -q 'wibu-monitor-api'; then
-        systemctl reset-failed wibu-monitor-api wibu-monitor-render wibu-monitor-node 2>/dev/null
+    if systemctl list-units --all 2>/dev/null | grep -q 'monitorwibu-api'; then
+        systemctl reset-failed monitorwibu-api monitorwibu-render monitorwibu-node 2>/dev/null
     fi
 fi
 

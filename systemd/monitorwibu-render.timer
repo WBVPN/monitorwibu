@@ -1,0 +1,11 @@
+[Unit]
+Description=MONITOR WIBU v2 - jadwal perbarui dashboard (tiap 60 detik)
+
+[Timer]
+OnCalendar=*:0/1
+AccuracySec=5s
+Persistent=false
+Unit=monitorwibu-render.service
+
+[Install]
+WantedBy=timers.target

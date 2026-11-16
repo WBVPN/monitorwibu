@@ -1,9 +1,9 @@
-# 📝 Changelog — WIBU MONITOR
+# 📝 Changelog — MONITOR WIBU
 
 ## v2.0 (2026-11-16) — perbaikan & perapian
 
 Sumber v1 (`master.sh`, `node.sh`, `uninstall.sh`) dipulihkan dari riwayat git
-`WBVPN/Wibu-Monitor` (commit `78cece0`, tepat sebelum commit `24a1c49` yang
+`WBVPN/monitorwibu` (commit `78cece0`, tepat sebelum commit `24a1c49` yang
 mengeluarkan sumber dari repo). Fitur asli dipertahankan, ini yang diperbaiki:
 
 **Keamanan**
@@ -27,21 +27,21 @@ mengeluarkan sumber dari repo). Fitur asli dipertahankan, ini yang diperbaiki:
   bangkit otomatis setelah reboot.
 - Server API dipisah menjadi berkas sendiri (`lib/api_server.py`) — v1 menulisnya lewat
   heredoc di tengah skrip.
-- Konfigurasi terpusat: `/etc/wibu-monitor/master.conf` + `nodes.json` (600), keadaan di
-  `/var/lib/wibu-monitor/` — v1 menyebar di `/root/.wibu_bot.conf`, `/root/node_*.txt`,
+- Konfigurasi terpusat: `/etc/monitorwibu/master.conf` + `nodes.json` (600), keadaan di
+  `/var/lib/monitorwibu/` — v1 menyebar di `/root/.wibu_bot.conf`, `/root/node_*.txt`,
   `/root/api_server.py`, `/root/.wibu_msg_id`, `/root/.wibu_geo_cache*`.
 - Pembersihan laporan basi tetap 300 detik, tapi ada `prune_reports()` yang teruji.
 - `uninstall.sh` punya `--purge` yang sekaligus membuang sisa v1 (cron, berkas `/root/.wibu_*`).
 
 **Fitur tambahan**
-- `wibu-monitor list` — daftar node + umur laporan terakhir + uptime + status layanan.
+- `monitorwibu list` — daftar node + umur laporan terakhir + uptime + status layanan.
 - Metrik baru: **RAM**, **Disk**, dan **load average** (v1 hanya uptime/speed/traffic).
 - **Peringatan otomatis**: RAM/disk ≥ 90% atau layanan mati → muncul di dashboard.
 - Traffic tetap memakai `vnstat` bila ada, tapi ada **fallback `/proc/net/dev`** (hitung selisih)
   sehingga metrik jalan di VPS tanpa vnstat.
 - Speed test jadi **opsional** (`SPEEDTEST=1`) — v1 menjalankannya setiap menit.
 - Tambah node **tanpa restart master** (daftar kunci dimuat ulang saat berkasnya berubah).
-- **26 uji otomatis** (`tests/test_whmon.py`), termasuk server HTTP sungguhan dan uji
+- **26 uji otomatis** (`tests/test_monitorwibu.py`), termasuk server HTTP sungguhan dan uji
   interoperabilitas tanda tangan dengan `openssl` (klien shell tetap bisa dipakai).
 
 ## v3.0 (2026-09-27) — versi awal (dari arsip repo)

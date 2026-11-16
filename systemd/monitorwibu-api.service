@@ -1,6 +1,6 @@
 [Unit]
-Description=WIBU MONITOR v2 - penerima laporan node (HMAC per node)
-Documentation=https://github.com/WBVPN/Wibu-Monitor
+Description=MONITOR WIBU v2 - penerima laporan node (HMAC per node)
+Documentation=https://github.com/WBVPN/monitorwibu
 After=network-online.target
 Wants=network-online.target
 
@@ -14,7 +14,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/var/lib/wibu-monitor /etc/wibu-monitor
+ReadWritePaths=/var/lib/monitorwibu /etc/monitorwibu
 StandardOutput=journal
 StandardError=journal
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""WIBU MONITOR v2 — agen node: kumpulkan metrik lalu kirim bertanda tangan.
+"""MONITOR WIBU v2 — agen node: kumpulkan metrik lalu kirim bertanda tangan.
 
-Konfigurasi /etc/wibu-monitor/node.conf (mode 600):
+Konfigurasi /etc/monitorwibu/node.conf (mode 600):
     MASTER=http://1.2.3.4:5000
     NAME=SG-1
     KEY=<64 hex dari master>
@@ -10,7 +10,7 @@ Konfigurasi /etc/wibu-monitor/node.conf (mode 600):
     INSECURE=0                                     (1 = terima sertifikat TLS self-signed)
     SPEEDTEST=0                                    (1 = ikut vnstat -tr 1, agak berat)
 
-Jalankan tiap menit (systemd timer: wibu-monitor-node.timer).
+Jalankan tiap menit (systemd timer: monitorwibu-node.timer).
 """
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ import time
 import urllib.error
 import urllib.request
 
-CONF_PATH = os.environ.get("WIBU_NODE_CONF", "/etc/wibu-monitor/node.conf")
-CACHE_DIR = "/var/lib/wibu-monitor-node"
+CONF_PATH = os.environ.get("MONITORWIBU_NODE_CONF", "/etc/monitorwibu/node.conf")
+CACHE_DIR = "/var/lib/monitorwibu-node"
 
 
 def load_conf(path: str) -> dict:
@@ -165,7 +165,7 @@ def city_of(ip: str) -> str:
         return cached
     try:
         req = urllib.request.Request(f"http://ip-api.com/json/{ip}",
-                                     headers={"User-Agent": "wibu-monitor/2.0"})
+                                     headers={"User-Agent": "monitorwibu/2.0"})
         with urllib.request.urlopen(req, timeout=8) as r:
             city = json.loads(r.read().decode()).get("city") or "Unknown"
     except Exception:
@@ -241,19 +241,19 @@ def collect() -> dict:
 
 
 def send(data: dict) -> int:
-    sys.path.insert(0, "/usr/local/lib/wibu-monitor")
+    sys.path.insert(0, "/usr/local/lib/monitorwibu")
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
     try:
-        import whmon  # noqa: PLC0415
+        import monitorwibu  # noqa: PLC0415
     except ImportError:
-        print("  [!] modul whmon tidak ada di /usr/local/lib/wibu-monitor", file=sys.stderr)
+        print("  [!] modul monitorwibu tidak ada di /usr/local/lib/monitorwibu", file=sys.stderr)
         return 1
     body = json.dumps({"data": data}).encode()
     ts = int(time.time())
     req = urllib.request.Request(
         f"{MASTER}/api/report", data=body, method="POST",
         headers={"Content-Type": "application/json", "X-Wibu-Node": NAME,
-                 "X-Wibu-Ts": str(ts), "X-Wibu-Sig": whmon.sign(KEY, body)})
+                 "X-Wibu-Ts": str(ts), "X-Wibu-Sig": monitorwibu.sign(KEY, body)})
     ctx = None
     if INSECURE and MASTER.startswith("https"):
         ctx = ssl._create_unverified_context()  # noqa: SLF001

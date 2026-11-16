@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""WIBU MONITOR v2 — inti logika bersama master & node.
+"""MONITOR WIBU v2 — inti logika bersama master & node.
 
 Tanpa dependensi luar (stdlib saja) supaya bisa diuji langsung:
-    python3 tests/test_whmon.py
+    python3 tests/test_monitorwibu.py
 
 Protokol (bukan X-API-Key lagi):
     POST /api/report      body: JSON

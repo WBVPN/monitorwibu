@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""WIBU MONITOR v2 — penerima laporan node (HTTP, stdlib saja).
+"""MONITOR WIBU v2 — penerima laporan node (HTTP, stdlib saja).
 
-Jalankan:  python3 api_server.py        (systemd: wibu-monitor-api.service)
+Jalankan:  python3 api_server.py        (systemd: monitorwibu-api.service)
 Env:
-    WIBU_CONF   berisi BOT_TOKEN, CHAT_ID, MASTER_NAME, NODES_DB, STATE_DIR,
-                PORT, BIND, TLS_CERT, TLS_KEY  (default /etc/wibu-monitor/master.conf)
+    MONITORWIBU_CONF   berisi BOT_TOKEN, CHAT_ID, MASTER_NAME, NODES_DB, STATE_DIR,
+                PORT, BIND, TLS_CERT, TLS_KEY  (default /etc/monitorwibu/master.conf)
 Keamanan:
     - kunci per node (tidak ada kunci "satu untuk semua"), tidak pernah dikirim ke jaringan
     - HMAC-SHA256 atas badan permintaan + jendela waktu 90 detik (anti-ulang)
@@ -21,10 +21,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import whmon  # noqa: E402
+import monitorwibu  # noqa: E402
 
-CONF_PATH = os.environ.get("WIBU_CONF", "/etc/wibu-monitor/master.conf")
-STATE_DIR = os.environ.get("WIBU_STATE", "/var/lib/wibu-monitor")
+CONF_PATH = os.environ.get("MONITORWIBU_CONF", "/etc/monitorwibu/master.conf")
+STATE_DIR = os.environ.get("MONITORWIBU_STATE", "/var/lib/monitorwibu")
 
 
 def load_conf(path: str) -> dict:
@@ -40,14 +40,14 @@ def load_conf(path: str) -> dict:
 
 
 CONF = load_conf(CONF_PATH)
-NODES_DB = CONF.get("NODES_DB", "/etc/wibu-monitor/nodes.json")
+NODES_DB = CONF.get("NODES_DB", "/etc/monitorwibu/nodes.json")
 REPORTS_DIR = os.path.join(CONF.get("STATE_DIR", STATE_DIR), "nodes")
 PORT = int(CONF.get("PORT", "5000"))
 BIND = CONF.get("BIND", "0.0.0.0")
 
-RATE_IP = whmon.RateLimiter(60, 60)
-RATE_NODE = whmon.RateLimiter(30, 60)
-_db = whmon.NodeDB(NODES_DB)
+RATE_IP = monitorwibu.RateLimiter(60, 60)
+RATE_NODE = monitorwibu.RateLimiter(30, 60)
+_db = monitorwibu.NodeDB(NODES_DB)
 
 
 def db_changed() -> bool:
@@ -56,7 +56,7 @@ def db_changed() -> bool:
     try:
         if os.path.getmtime(NODES_DB) != getattr(db_changed, "mtime", None):
             db_changed.mtime = os.path.getmtime(NODES_DB)
-            _db = whmon.NodeDB(NODES_DB)
+            _db = monitorwibu.NodeDB(NODES_DB)
             return True
     except OSError:
         pass
@@ -64,7 +64,7 @@ def db_changed() -> bool:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "wibu-monitor/2.0"
+    server_version = "monitorwibu/2.0"
     protocol_version = "HTTP/1.1"
 
     # ---------------------------------------------------------------- utilitas
@@ -84,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
     # -------------------------------------------------------------------- GET
     def do_GET(self) -> None:  # noqa: N802
         if self.path.rstrip("/") == "/health":
-            n = len(whmon.read_reports(REPORTS_DIR, fresh=10 ** 9))
+            n = len(monitorwibu.read_reports(REPORTS_DIR, fresh=10 ** 9))
             self._send(200, json.dumps({"ok": True, "node": n, "time": int(time.time())}),
                        "application/json")
         else:
@@ -101,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self._send(400, "bad length")
             return
-        if length <= 0 or length > whmon.MAX_BODY:
+        if length <= 0 or length > monitorwibu.MAX_BODY:
             self._send(413, "too large")
             return
 
@@ -115,8 +115,8 @@ class Handler(BaseHTTPRequestHandler):
         sig = self.headers.get("X-Wibu-Sig", "")
 
         try:
-            name = whmon.sanitize_name(name)
-        except whmon.Invalid:
+            name = monitorwibu.sanitize_name(name)
+        except monitorwibu.Invalid:
             self._send(400, "bad name")
             return
         if not RATE_NODE.allow(name):
@@ -129,7 +129,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(403, "unknown node")
             return
 
-        ok, why = whmon.verify(key, body, sig, ts)
+        ok, why = monitorwibu.verify(key, body, sig, ts)
         if not ok:
             self.log_message("tolak node=%s alasan=%s ip=%s", name, why, self.client_address[0])
             self._send(403, "bad signature")
@@ -137,13 +137,13 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             payload = json.loads(body.decode())
-            data = whmon.parse_data(payload.get("data", {}))
-        except (ValueError, whmon.Invalid, UnicodeDecodeError):
+            data = monitorwibu.parse_data(payload.get("data", {}))
+        except (ValueError, monitorwibu.Invalid, UnicodeDecodeError):
             self._send(400, "bad payload")
             return
 
         try:
-            whmon.store_report(REPORTS_DIR, name, data, int(ts))
+            monitorwibu.store_report(REPORTS_DIR, name, data, int(ts))
         except OSError as exc:
             self.log_message("gagal simpan %s: %s", name, exc)
             self._send(500, "store failed")

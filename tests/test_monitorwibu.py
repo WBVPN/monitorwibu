@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Uji WIBU MONITOR v2 — tanpa dependensi luar.
+"""Uji MONITOR WIBU v2 — tanpa dependensi luar.
 
-    python3 tests/test_whmon.py
+    python3 tests/test_monitorwibu.py
 """
 from __future__ import annotations
 
@@ -21,74 +21,74 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 sys.path.insert(0, os.path.join(ROOT, "bin"))
 
-import whmon  # noqa: E402
+import monitorwibu  # noqa: E402
 
 
 class TestNamaData(unittest.TestCase):
     def test_nama_sah(self):
         for nama in ("SG-1", "id_jkt_2", "A" * 50):
-            self.assertEqual(whmon.sanitize_name(nama), nama)
+            self.assertEqual(monitorwibu.sanitize_name(nama), nama)
 
     def test_nama_tidak_sah(self):
         for nama in ("", "  ", "ada spasi", "../etc/passwd", "A" * 51, "nama/turun", "emoji🦊"):
-            with self.assertRaises(whmon.Invalid, msg=nama):
-                whmon.sanitize_name(nama)
+            with self.assertRaises(monitorwibu.Invalid, msg=nama):
+                monitorwibu.sanitize_name(nama)
 
     def test_data_batas(self):
-        self.assertEqual(whmon.parse_data({"uptime": "1 Jam", "ram_pct": 42.5, "ok": True}),
+        self.assertEqual(monitorwibu.parse_data({"uptime": "1 Jam", "ram_pct": 42.5, "ok": True}),
                          {"uptime": "1 Jam", "ram_pct": 42.5, "ok": True})
-        with self.assertRaises(whmon.Invalid):
-            whmon.parse_data({"k": "x" * 401})
-        with self.assertRaises(whmon.Invalid):
-            whmon.parse_data({f"k{i}": 1 for i in range(41)})
-        with self.assertRaises(whmon.Invalid):
-            whmon.parse_data({"k": "baris\nbaru\ttab\x07bel"})
-        with self.assertRaises(whmon.Invalid):
-            whmon.parse_data({"k": ["x" * 101]})
-        with self.assertRaises(whmon.Invalid):
-            whmon.parse_data("bukan dict")
+        with self.assertRaises(monitorwibu.Invalid):
+            monitorwibu.parse_data({"k": "x" * 401})
+        with self.assertRaises(monitorwibu.Invalid):
+            monitorwibu.parse_data({f"k{i}": 1 for i in range(41)})
+        with self.assertRaises(monitorwibu.Invalid):
+            monitorwibu.parse_data({"k": "baris\nbaru\ttab\x07bel"})
+        with self.assertRaises(monitorwibu.Invalid):
+            monitorwibu.parse_data({"k": ["x" * 101]})
+        with self.assertRaises(monitorwibu.Invalid):
+            monitorwibu.parse_data("bukan dict")
 
 
 class TestTandaTangan(unittest.TestCase):
     def test_terima(self):
         key, body, ts = "abc123", b'{"data":{"uptime":"1 Jam"}}', int(time.time())
-        sig = whmon.sign(key, body)
-        self.assertEqual(whmon.verify(key, body, sig, ts), (True, "ok"))
+        sig = monitorwibu.sign(key, body)
+        self.assertEqual(monitorwibu.verify(key, body, sig, ts), (True, "ok"))
 
     def test_tolak_kunci_lain(self):
         body, ts = b"{}", int(time.time())
-        sig = whmon.sign("kunci-A", body)
-        self.assertEqual(whmon.verify("kunci-B", body, sig, ts)[1], "sig")
+        sig = monitorwibu.sign("kunci-A", body)
+        self.assertEqual(monitorwibu.verify("kunci-B", body, sig, ts)[1], "sig")
 
     def test_tolak_badan_diubah(self):
         ts = int(time.time())
-        sig = whmon.sign("k", b'{"data":{"uptime":"1 Jam"}}')
-        self.assertEqual(whmon.verify("k", b'{"data":{"uptime":"9 Jam"}}', sig, ts)[1], "sig")
+        sig = monitorwibu.sign("k", b'{"data":{"uptime":"1 Jam"}}')
+        self.assertEqual(monitorwibu.verify("k", b'{"data":{"uptime":"9 Jam"}}', sig, ts)[1], "sig")
 
     def test_tolak_waktu_basi_dan_masa_depan(self):
         body, key = b"{}", "k"
-        sig = whmon.sign(key, body)
+        sig = monitorwibu.sign(key, body)
         now = int(time.time())
-        self.assertEqual(whmon.verify(key, body, sig, now - 91, now=now)[1], "ts-window")
-        self.assertEqual(whmon.verify(key, body, sig, now + 91, now=now)[1], "ts-window")
-        self.assertTrue(whmon.verify(key, body, sig, now - 89, now=now)[0])
+        self.assertEqual(monitorwibu.verify(key, body, sig, now - 91, now=now)[1], "ts-window")
+        self.assertEqual(monitorwibu.verify(key, body, sig, now + 91, now=now)[1], "ts-window")
+        self.assertTrue(monitorwibu.verify(key, body, sig, now - 89, now=now)[0])
 
     def test_tolak_format_sig(self):
         now = int(time.time())
         for bad in ("", "zz" * 32, "abc", "A" * 64):
-            self.assertEqual(whmon.verify("k", b"{}", bad, now, now=now)[1], "sig-format")
+            self.assertEqual(monitorwibu.verify("k", b"{}", bad, now, now=now)[1], "sig-format")
 
 
 class TestPembatasLaju(unittest.TestCase):
     def test_batasi(self):
-        rl = whmon.RateLimiter(3, 60)
+        rl = monitorwibu.RateLimiter(3, 60)
         now = 1_000_000.0
         self.assertTrue(all(rl.allow("ip", now=t) for t in (now, now, now)))
         self.assertFalse(rl.allow("ip", now=now))
         self.assertTrue(rl.allow("ip", now=now + 61))
 
     def test_terpisah_per_kunci(self):
-        rl = whmon.RateLimiter(1, 60)
+        rl = monitorwibu.RateLimiter(1, 60)
         self.assertTrue(rl.allow("a", now=0))
         self.assertFalse(rl.allow("a", now=0))
         self.assertTrue(rl.allow("b", now=0))
@@ -96,7 +96,7 @@ class TestPembatasLaju(unittest.TestCase):
 
 class TestRender(unittest.TestCase):
     def test_escape_html(self):
-        pesan = whmon.render_message("master", [("SG-1", {
+        pesan = monitorwibu.render_message("master", [("SG-1", {
             "city": "<b>Jakarta</b> & <script>alert(1)</script>",
             "services": ["xray:down"], "panel_active": False,
             "ram_pct": 95, "disk_pct": 91,
@@ -108,7 +108,7 @@ class TestRender(unittest.TestCase):
         self.assertIn("xray", pesan)
 
     def test_blok_normal(self):
-        pesan = whmon.render_block("SG-1", {"city": "Singapore", "uptime": "2 Hari, 03:04",
+        pesan = monitorwibu.render_block("SG-1", {"city": "Singapore", "uptime": "2 Hari, 03:04",
                                            "ram": "1.0 GB / 2.0 GB (50%)", "disk_pct": 40,
                                            "bw_today": "1.2 GB", "services": ["xray:up"],
                                            "panel_active": True})
@@ -116,7 +116,7 @@ class TestRender(unittest.TestCase):
         self.assertNotIn("Peringatan", pesan)
 
     def test_belum_ada_node(self):
-        self.assertIn("Belum ada node", whmon.render_message("m", []))
+        self.assertIn("Belum ada node", monitorwibu.render_message("m", []))
 
 
 class TestPenyimpanan(unittest.TestCase):
@@ -127,28 +127,28 @@ class TestPenyimpanan(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_simpan_baca_pangkas(self):
-        whmon.store_report(self.dir, "SG-1", {"uptime": "1 Jam"}, int(time.time()))
-        whmon.store_report(self.dir, "ID-2", {"uptime": "2 Jam"}, int(time.time()) - 10_000)
-        segar = whmon.read_reports(self.dir, fresh=300)
+        monitorwibu.store_report(self.dir, "SG-1", {"uptime": "1 Jam"}, int(time.time()))
+        monitorwibu.store_report(self.dir, "ID-2", {"uptime": "2 Jam"}, int(time.time()) - 10_000)
+        segar = monitorwibu.read_reports(self.dir, fresh=300)
         self.assertEqual([n for n, _, _ in segar], ["SG-1"])
-        self.assertEqual(whmon.prune_reports(self.dir, fresh=300), 1)
+        self.assertEqual(monitorwibu.prune_reports(self.dir, fresh=300), 1)
         self.assertEqual(len(os.listdir(self.dir)), 1)
 
     def test_nama_berkas_aman(self):
-        whmon.store_report(self.dir, "SG-1", {}, int(time.time()))
+        monitorwibu.store_report(self.dir, "SG-1", {}, int(time.time()))
         self.assertEqual(os.listdir(self.dir), ["SG-1.json"])
-        with self.assertRaises(whmon.Invalid):
-            whmon.store_report(self.dir, "../../etc/passwd", {}, int(time.time()))
+        with self.assertRaises(monitorwibu.Invalid):
+            monitorwibu.store_report(self.dir, "../../etc/passwd", {}, int(time.time()))
 
     def test_basis_kunci(self):
         path = os.path.join(self.dir, "nodes.json")
-        db = whmon.NodeDB(path)
+        db = monitorwibu.NodeDB(path)
         key = db.add("SG-1")
         self.assertEqual(len(key), 64)
         self.assertEqual(oct(os.stat(path).st_mode & 0o777), oct(0o600))
-        self.assertEqual(whmon.NodeDB(path).get("SG-1"), key)
+        self.assertEqual(monitorwibu.NodeDB(path).get("SG-1"), key)
         self.assertTrue(db.remove("SG-1"))
-        self.assertEqual(whmon.NodeDB(path).nodes, {})
+        self.assertEqual(monitorwibu.NodeDB(path).nodes, {})
 
 
 class TestInteropShell(unittest.TestCase):
@@ -162,7 +162,7 @@ class TestInteropShell(unittest.TestCase):
             input=body, capture_output=True).stdout
         shell_sig = subprocess.run(["od", "-An", "-tx1"], input=out,
                                    capture_output=True).stdout.decode().split()
-        self.assertEqual("".join(shell_sig), whmon.sign(key, body))
+        self.assertEqual("".join(shell_sig), monitorwibu.sign(key, body))
 
 
 class TestHttpEndToEnd(unittest.TestCase):
@@ -175,9 +175,9 @@ class TestHttpEndToEnd(unittest.TestCase):
         cls.tmp = tempfile.mkdtemp()
         api.REPORTS_DIR = os.path.join(cls.tmp, "nodes")
         api.NODES_DB = os.path.join(cls.tmp, "nodes.json")
-        api.RATE_IP = whmon.RateLimiter(1000, 60)
-        api.RATE_NODE = whmon.RateLimiter(1000, 60)
-        db = whmon.NodeDB(api.NODES_DB)
+        api.RATE_IP = monitorwibu.RateLimiter(1000, 60)
+        api.RATE_NODE = monitorwibu.RateLimiter(1000, 60)
+        db = monitorwibu.NodeDB(api.NODES_DB)
         cls.key = db.add("SG-1")
         api._db = db
         from http.server import ThreadingHTTPServer  # noqa: PLC0415
@@ -195,7 +195,7 @@ class TestHttpEndToEnd(unittest.TestCase):
     def _post(self, body: bytes, name="SG-1", key=None, ts=None, sig=None):
         key = self.key if key is None else key
         ts = int(time.time()) if ts is None else ts
-        sig = whmon.sign(key, body) if sig is None else sig
+        sig = monitorwibu.sign(key, body) if sig is None else sig
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/api/report", data=body, method="POST",
             headers={"X-Wibu-Node": name, "X-Wibu-Ts": str(ts), "X-Wibu-Sig": sig})
@@ -219,7 +219,7 @@ class TestHttpEndToEnd(unittest.TestCase):
     def test_3_node_tidak_dikenal(self):
         body = b"{}"
         code, _ = self._post(body, name="BELUM-ADA", key="x" * 64,
-                             sig=whmon.sign("x" * 64, body))
+                             sig=monitorwibu.sign("x" * 64, body))
         self.assertEqual(code, 403)
 
     def test_4_ulang_terlambat(self):
@@ -230,7 +230,7 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.assertEqual(self._post(b"bukan json")[0], 400)
 
     def test_6_terlalu_besar(self):
-        body = b'{"data":{"x":"' + b"A" * (whmon.MAX_BODY + 10) + b'"}}'
+        body = b'{"data":{"x":"' + b"A" * (monitorwibu.MAX_BODY + 10) + b'"}}'
         self.assertEqual(self._post(body)[0], 413)
 
     def test_7_field_tidak_sah(self):

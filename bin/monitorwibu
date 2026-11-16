@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""WIBU MONITOR v2 — CLI master.
+"""MONITOR WIBU v2 — CLI master.
 
 Perintah:
-    wibu-monitor add-node <NAMA>     buat kunci node + cetak perintah pemasangan node
-    wibu-monitor del-node <NAMA>     hapus node (kunci langsung tak berlaku)
-    wibu-monitor list                daftar node + umur laporan terakhir
-    wibu-monitor render              susun & kirim/perbarui pesan dashboard Telegram
-    wibu-monitor show                cetak pesan dashboard ke layar (tanpa kirim)
-    wibu-monitor test                uji cepat: kirim laporan palsu bertanda tangan sendiri
+    monitorwibu add-node <NAMA>     buat kunci node + cetak perintah pemasangan node
+    monitorwibu del-node <NAMA>     hapus node (kunci langsung tak berlaku)
+    monitorwibu list                daftar node + umur laporan terakhir
+    monitorwibu render              susun & kirim/perbarui pesan dashboard Telegram
+    monitorwibu show                cetak pesan dashboard ke layar (tanpa kirim)
+    monitorwibu test                uji cepat: kirim laporan palsu bertanda tangan sendiri
 """
 from __future__ import annotations
 
@@ -19,11 +19,11 @@ import time
 import urllib.parse
 import urllib.request
 
-sys.path.insert(0, "/usr/local/lib/wibu-monitor")
+sys.path.insert(0, "/usr/local/lib/monitorwibu")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
-import whmon  # noqa: E402
+import monitorwibu  # noqa: E402
 
-CONF_PATH = os.environ.get("WIBU_CONF", "/etc/wibu-monitor/master.conf")
+CONF_PATH = os.environ.get("MONITORWIBU_CONF", "/etc/monitorwibu/master.conf")
 
 
 def load_conf(path: str) -> dict:
@@ -39,11 +39,11 @@ def load_conf(path: str) -> dict:
 
 
 CONF = load_conf(CONF_PATH)
-STATE = CONF.get("STATE_DIR", "/var/lib/wibu-monitor")
-NODES_DB = CONF.get("NODES_DB", "/etc/wibu-monitor/nodes.json")
+STATE = CONF.get("STATE_DIR", "/var/lib/monitorwibu")
+NODES_DB = CONF.get("NODES_DB", "/etc/monitorwibu/nodes.json")
 REPORTS = os.path.join(STATE, "nodes")
 MSG_ID_FILE = os.path.join(STATE, "message_id")
-FRESH = int(CONF.get("FRESH", str(whmon.FRESH)))
+FRESH = int(CONF.get("FRESH", str(monitorwibu.FRESH)))
 TZ = CONF.get("TZ", "WIB")
 
 
@@ -67,10 +67,10 @@ def tg(method: str, **fields) -> dict:
 
 # ------------------------------------------------------------------- perintah
 def cmd_add_node(name: str) -> int:
-    db = whmon.NodeDB(NODES_DB)
+    db = monitorwibu.NodeDB(NODES_DB)
     try:
         key = db.add(name)
-    except whmon.Invalid as exc:
+    except monitorwibu.Invalid as exc:
         die(str(exc))
     host = CONF.get("PUBLIC_HOST") or CONF.get("MASTER_IP", "<IP-MASTER>")
     port = CONF.get("PORT", "5000")
@@ -84,7 +84,7 @@ def cmd_add_node(name: str) -> int:
 
 
 def cmd_del_node(name: str) -> int:
-    db = whmon.NodeDB(NODES_DB)
+    db = monitorwibu.NodeDB(NODES_DB)
     ok = db.remove(name)
     for path in (os.path.join(REPORTS, f"{name}.json"),):
         if os.path.exists(path):
@@ -94,10 +94,10 @@ def cmd_del_node(name: str) -> int:
 
 
 def cmd_list() -> int:
-    db = whmon.NodeDB(NODES_DB)
-    reports = {n: (d, a) for n, d, a in whmon.read_reports(REPORTS, fresh=10 ** 9)}
+    db = monitorwibu.NodeDB(NODES_DB)
+    reports = {n: (d, a) for n, d, a in monitorwibu.read_reports(REPORTS, fresh=10 ** 9)}
     if not db.nodes:
-        print("  (belum ada node — tambah: wibu-monitor add-node <NAMA>)")
+        print("  (belum ada node — tambah: monitorwibu add-node <NAMA>)")
         return 0
     print(f"  {'NODE':<18} {'LAPORAN':<12} {'UPTIME':<18} LAYANAN")
     for name in sorted(db.nodes):
@@ -109,10 +109,10 @@ def cmd_list() -> int:
 
 
 def build_message() -> str:
-    whmon.prune_reports(REPORTS, FRESH)
-    reports = whmon.read_reports(REPORTS, FRESH)
+    monitorwibu.prune_reports(REPORTS, FRESH)
+    reports = monitorwibu.read_reports(REPORTS, FRESH)
     master = CONF.get("MASTER_NAME", "WIBU MASTER")
-    text = whmon.render_message(master, reports)
+    text = monitorwibu.render_message(master, reports)
     return text + f"\n⏱️ <b>Sinkronisasi :</b> <i>{time.strftime('%d %b %Y, %H:%M:%S')} {TZ}</i>"
 
 
@@ -153,16 +153,16 @@ def cmd_render(send: bool = True) -> int:
 
 def cmd_test() -> int:
     """Bukti cepat: kirim laporan bertanda tangan dari master sendiri (node bayangan)."""
-    db = whmon.NodeDB(NODES_DB)
+    db = monitorwibu.NodeDB(NODES_DB)
     name = list(db.nodes)[0] if db.nodes else None
     if not name:
-        die("belum ada node; jalankan: wibu-monitor add-node TES")
+        die("belum ada node; jalankan: monitorwibu add-node TES")
     key = db.get(name)
     body = json.dumps({"data": {"uptime": "0 Jam, 0 Menit", "city": "Local Test",
                                 "services": ["xray:up"], "panel_active": True}}).encode()
     ts = int(time.time())
-    sig = whmon.sign(key, body)
-    print(f"  uji lokal node '{name}': verifikasi sendiri = {whmon.verify(key, body, sig, ts)[0]}")
+    sig = monitorwibu.sign(key, body)
+    print(f"  uji lokal node '{name}': verifikasi sendiri = {monitorwibu.verify(key, body, sig, ts)[0]}")
     print("  (kirim sungguhan lewat jaringan diuji oleh install-node.sh)")
     return 0
 
