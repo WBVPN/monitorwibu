@@ -25,6 +25,8 @@ import time
 import urllib.error
 import urllib.request
 
+import ipaddress
+
 CONF_PATH = os.environ.get("MONITORWIBU_NODE_CONF", "/etc/monitorwibu/node.conf")
 CACHE_DIR = "/var/lib/monitorwibu-node"
 
@@ -76,8 +78,16 @@ def cache_put(key: str, value: str) -> None:
 
 
 def mask_ip(ip: str) -> str:
-    p = ip.split(".")
-    return f"{p[0]}.{p[1][:2]}*.***.**" if len(p) == 4 else ip
+    """Samarkan IPv4 maupun IPv6 (B-11: IPv6 dulu lolos utuh)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if addr.version == 4:
+        p = ip.split(".")
+        return f"{p[0]}.{p[1][:2]}*.***.**" if len(p) == 4 else ip
+    groups = addr.exploded.split(":")           # IPv6: sisakan dua grup pertama
+    return ":".join(groups[:2] + ["*"] * (len(groups) - 2))
 
 
 def mask_domain(domain: str) -> str:
@@ -128,8 +138,9 @@ def traffic() -> tuple[str, str]:
         out = run(["vnstat", "-i", iface(), "--oneline"], timeout=10)
         if out:
             parts = out.split(";")
-            today = parts[6].strip() if len(parts) > 6 else ""
-            month = parts[11].strip() if len(parts) > 11 else ""
+            # B-10: field 5/10 = TOTAL byte; 6/11 = laju kbit/s (per man vnstat)
+            today = parts[5].strip() if len(parts) > 5 else ""
+            month = parts[10].strip() if len(parts) > 10 else ""
             if today and month:
                 return today, month
     try:

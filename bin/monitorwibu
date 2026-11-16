@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -61,6 +62,13 @@ def tg(method: str, **fields) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read().decode())
+    except urllib.error.HTTPError as exc:
+        # C-2: badan JSON Telegram (mis. description "message to edit not found")
+        # harus dipertahankan supaya cmd_render bisa membuang id pesan basi.
+        try:
+            return json.loads(exc.read().decode())
+        except Exception:
+            return {"ok": False, "description": str(exc)}
     except Exception as exc:  # jaringan/telegram
         return {"ok": False, "description": str(exc)}
 
@@ -84,6 +92,10 @@ def cmd_add_node(name: str) -> int:
 
 
 def cmd_del_node(name: str) -> int:
+    try:
+        name = monitorwibu.sanitize_name(name)   # B-8: tolak nama traversal
+    except monitorwibu.Invalid as exc:
+        die(str(exc))
     db = monitorwibu.NodeDB(NODES_DB)
     ok = db.remove(name)
     for path in (os.path.join(REPORTS, f"{name}.json"),):
@@ -103,8 +115,11 @@ def cmd_list() -> int:
     for name in sorted(db.nodes):
         data, age = reports.get(name, ({}, None))
         age_s = f"{age} detik lalu" if age is not None else "belum lapor"
+        svcs = data.get("services")
+        if not isinstance(svcs, list):    # C-1: tahan data ngawur
+            svcs = []
         print(f"  {name:<18} {age_s:<12} {str(data.get('uptime','-')):<18} "
-              f"{' '.join(str(s) for s in data.get('services', [])) or '-'}")
+              f"{' '.join(str(s) for s in svcs) or '-'}")
     return 0
 
 

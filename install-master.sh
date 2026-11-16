@@ -79,7 +79,6 @@ install -m 755 "$SRC/bin/monitorwibu"      "$BIN/monitorwibu"
 install -m 755 "$SRC/bin/monitorwibu-node" "$BIN/monitorwibu-node"
 install -m 644 "$SRC/lib/monitorwibu.py"          "$LIBDIR/monitorwibu.py"
 install -m 644 "$SRC/lib/api_server.py"     "$LIBDIR/api_server.py"
-install -d -m 755 "$LIBDIR/tests" 2>/dev/null || true
 say "[2] program dipasang: /usr/local/bin/monitorwibu (+ node), lib di $LIBDIR"
 
 # ------------------------------------------------------------------ 3. systemd
@@ -92,6 +91,42 @@ systemctl daemon-reload
 systemctl enable --now monitorwibu-api.service >/dev/null 2>&1 || true
 systemctl enable --now monitorwibu-render.timer >/dev/null 2>&1 || true
 say "[3] layanan: monitorwibu-api (aktif) + timer render tiap 60 detik"
+
+# ---------------------------------------- 3b. master memantau dirinya sendiri
+# C-3 (regresi v1): master dulu juga tampil di dashboard; di v2 master harus
+# melaporkan metrik dirinya lewat node.conf + timer node.
+if [[ ! -f $ETC/node.conf ]]; then
+    # E3b/R4-5: validasi MASTER_NAME (pola sama dgn NAME_RE di lib/monitorwibu.py) SEBELUM
+    # dipakai/ditulis — nama berisi baris-baru tak boleh menyuntik baris ke node.conf.
+    if [[ -n $MASTER_NAME && ! $MASTER_NAME =~ ^[A-Za-z0-9_-]{1,50}$ ]]; then
+        say "[!] MASTER_NAME tidak sah (hanya A-Z a-z 0-9 _ -, 1-50 karakter) — node master dilewati"
+        MASTER_NAME=""
+    fi
+    # E2-J3: MASTER_NAME dilewatkan lewat argv, tidak disuntikkan ke string python -c
+    MS_KEY=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2],""))' "$ETC/nodes.json" "$MASTER_NAME" 2>/dev/null || true)
+    if [[ -z $MS_KEY ]]; then
+        "$BIN/monitorwibu" add-node "$MASTER_NAME" >/dev/null 2>&1 || true
+        MS_KEY=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2],""))' "$ETC/nodes.json" "$MASTER_NAME" 2>/dev/null || true)
+    fi
+    # E2-J1: jangan tulis node.conf dengan kunci kosong (bikin node gagal kirim tiap 60 detik)
+    if [[ -n $MS_KEY ]]; then
+        {
+            echo "MASTER=\"http://127.0.0.1:$PORT\""
+            echo "NAME=\"$MASTER_NAME\""
+            echo "KEY=\"$MS_KEY\""
+        } > "$ETC/node.conf"
+        chmod 600 "$ETC/node.conf"
+        say "[3b] node.conf master dibuat (kunci sendiri, mode 600)"
+    else
+        say "[!] add-node gagal — kunci kosong: node.conf TIDAK dibuat, timer node tidak dinyalakan"
+        say "    cek: monitorwibu add-node \"$MASTER_NAME\" lalu jalankan ulang skrip ini"
+    fi
+fi
+# E2-J1: nyalakan timer hanya bila node.conf ada DAN berisi kunci
+if [[ -s $ETC/node.conf ]]; then
+    systemctl enable --now monitorwibu-node.timer >/dev/null 2>&1 || true
+    say "[3b] master memantau dirinya sendiri (timer node diaktifkan)"
+fi
 
 # ----------------------------------------------------------------- 4. firewall
 PORT_NOW=$(grep -oP '^PORT="\K[^"]+' "$ETC/master.conf" || echo "$PORT")

@@ -21,10 +21,12 @@ import html
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,50}$")
+SERVICES_RE = re.compile(r"[^:]{1,40}:(up|down)")
 TS_SKEW = 90            # detik, jendela anti-ulang
 MAX_BODY = 96 * 1024    # batas badan permintaan
 MAX_FIELDS = 40
@@ -55,6 +57,13 @@ def parse_data(data) -> dict:
     for k, v in data.items():
         if not isinstance(k, str) or not k or len(k) > 40:
             raise Invalid("nama field tidak sah")
+        if k == "services":
+            # WAJIB daftar "nama:up|down"; satu node ngawur tidak boleh menjatuhkan render.
+            if not (isinstance(v, list) and len(v) <= 20
+                    and all(isinstance(x, str) and SERVICES_RE.fullmatch(x) for x in v)):
+                raise Invalid("daftar layanan tidak sah")
+            out[k] = v
+            continue
         if isinstance(v, bool) or isinstance(v, (int, float)):
             out[k] = v
         elif isinstance(v, str):
@@ -99,12 +108,24 @@ class NodeDB:
     def __init__(self, path: str):
         self.path = path
         self.nodes: dict[str, str] = {}
+        self.damaged = False          # R4-4: registry tak terpakai (rusak / bukan objek)
         self.load()
 
     def load(self) -> None:
-        if os.path.exists(self.path):
+        """Jangan pernah melempar: nodes.json rusak/bukan objek -> dict kosong + peringatan."""
+        self.damaged = False
+        if not os.path.exists(self.path):
+            return
+        try:
             with open(self.path) as f:
-                self.nodes = json.load(f)
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError("isi bukan objek JSON")
+            self.nodes = data
+        except Exception as exc:      # E2-E/R4-4: jangan kehilangan layanan senyap
+            self.nodes = {}
+            self.damaged = True
+            print(f"[db] nodes.json rusak: {exc}", file=sys.stderr, flush=True)
 
     def save(self) -> None:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -153,11 +174,13 @@ def read_reports(dirpath: str, fresh: int = FRESH) -> list[tuple[str, dict, int]
         try:
             with open(path) as f:
                 obj = json.load(f)
-            age = int(now - float(obj.get("ts", 0)))
+            age = now - float(obj.get("ts", 0))
         except Exception:
             continue
-        if age <= fresh:
-            out.append((fn[:-5], obj.get("data", {}), age))
+        if age <= fresh:            # float, agar sepakat dgn prune (age > fresh)
+            data = obj.get("data", {})
+            # E2-F2: data bukan objek -> {} supaya satu berkas rusak tak mematikan render
+            out.append((fn[:-5], data if isinstance(data, dict) else {}, int(age)))
     return out
 
 
@@ -183,7 +206,13 @@ def prune_reports(dirpath: str, fresh: int = FRESH) -> int:
 
 # ------------------------------------------------------------------ pembatasan
 class RateLimiter:
-    """Pembatas laju sederhana dalam memori (per kunci, jendela geser kasar)."""
+    """Pembatas laju sederhana dalam memori (per kunci, jendela geser kasar).
+
+    Jumlah ember dibatasi (MAX_BUCKETS) supaya kunci dari header penyerang
+    tidak menumbuhkan memori tanpa batas.
+    """
+
+    MAX_BUCKETS = 4096
 
     def __init__(self, limit: int, window: int = 60):
         self.limit = limit
@@ -192,13 +221,24 @@ class RateLimiter:
 
     def allow(self, key: str, now: float | None = None) -> bool:
         now = time.time() if now is None else now
+        baru = key not in self.hits
         lst = [t for t in self.hits.get(key, []) if now - t < self.window]
         if len(lst) >= self.limit:
             self.hits[key] = lst
             return False
+        if baru and len(self.hits) >= self.MAX_BUCKETS:
+            # E2-D: ember penuh -> jangan buang ember aktif; tolak kunci baru saja
+            self._evict(now)
+            if len(self.hits) >= self.MAX_BUCKETS:
+                return False
         lst.append(now)
         self.hits[key] = lst
         return True
+
+    def _evict(self, now: float) -> None:
+        """Buang HANYA ember yang benar-benar kedaluwarsa (jangan reset ember aktif)."""
+        for k in [k for k, v in self.hits.items() if not v or now - v[-1] >= self.window]:
+            del self.hits[k]
 
 
 # ---------------------------------------------------------------------- render
@@ -212,6 +252,8 @@ def _badge(active: bool) -> str:
 
 def render_block(name: str, data: dict) -> str:
     """Blok satu node untuk pesan Telegram (semua nilai di-escape)."""
+    if not isinstance(data, dict):   # E2-F2: tahan data non-objek
+        data = {}
     warn = []
     try:
         if float(data.get("ram_pct", 0)) >= 90:
@@ -220,7 +262,10 @@ def render_block(name: str, data: dict) -> str:
             warn.append("Disk hampir penuh")
     except (TypeError, ValueError):
         pass
-    down = [s.split(":")[0] for s in data.get("services", []) if str(s).endswith(":down")]
+    svcs = data.get("services")
+    if not isinstance(svcs, list):     # data ngawur: jangan meledak
+        svcs = []
+    down = [str(s).split(":")[0] for s in svcs if str(s).endswith(":down")]
     if down:
         warn.append("Layanan mati: " + ", ".join(_esc(d) for d in down))
 
@@ -230,6 +275,7 @@ def render_block(name: str, data: dict) -> str:
         f" ┣ 🔌 <b>IPv4   :</b> <code>{_esc(data.get('ip', '-'))}</code>",
         f" ┣ 🏙️ <b>Lokasi :</b> {_esc(data.get('city', 'Unknown'))} (Auto)",
         f" ┣ ⏳ <b>Uptime :</b> {_esc(data.get('uptime', '-'))}",
+        f" ┣ ⚙️ <b>Load   :</b> {_esc(data.get('load', '-'))}",
         f" ┣ 🧠 <b>RAM    :</b> {_esc(data.get('ram', '-'))}",
         f" ┣ 💾 <b>Disk   :</b> {_esc(data.get('disk', '-'))}",
     ]

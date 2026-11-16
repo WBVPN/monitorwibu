@@ -1,4 +1,4 @@
-# 🦊 MONITOR WIBU v2
+# 🦊 MONITOR WIBU v2.0.1
 
 Monitor multi-VPS real-time: tiap node mengirim metrik ke satu master, master menampilkan
 dashboard di **satu pesan Telegram** yang diperbarui otomatis tiap 60 detik.
@@ -89,9 +89,10 @@ monitorwibu-node                        # kirim metrik manual (di node)
 ## 🧪 Uji
 
 ```bash
-python3 tests/test_monitorwibu.py     # 26 uji: nama, batas data, HMAC (terima/tolak/basi/format),
-                                # pembatas laju, escape HTML, penyimpanan, interop openssl,
-                                # dan server HTTP sungguhan (200/403/400/413/429)
+python3 tests/test_monitorwibu.py     # 26 uji inti: nama, batas data, HMAC (terima/tolak/basi/format),
+                                      # pembatas laju, escape HTML, penyimpanan, interop openssl, dan
+                                      # server HTTP sungguhan (200/400/403/404/413)
+python3 tests/test_findings_red.py    # 42 kasus uji temuan review (wajib hijau sebelum rilis)
 ```
 
 ## 📁 Struktur
